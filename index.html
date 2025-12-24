@@ -1,252 +1,261 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area } from 'recharts';
-import { Settings, Info, Activity, Wind, AlertCircle } from 'lucide-react';
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>기계 진동 및 공진 분석 시뮬레이터</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .slider-label { display: flex; justify-content: space-between; font-size: 0.875rem; margin-bottom: 0.25rem; }
+        input[type=range] { width: 100%; height: 6px; border-radius: 3px; cursor: pointer; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-900 min-h-screen p-4 md:p-8">
 
-const App = () => {
-  const [model, setModel] = useState('k-epsilon'); // 'k-epsilon' vs 'k-omega-sst'
-  const [reynolds, setReynolds] = useState(50000);
-  const [activeTab, setActiveTab] = useState('visualization');
-
-  // CFD 시뮬레이션 데이터 생성 로직 (물리적 근거에 기반한 근사치)
-  const simulationData = useMemo(() => {
-    const points = 100;
-    const data = [];
-    const expansionRatio = 2; // 급확대비
-    
-    // k-epsilon은 박리 영역을 과소평가하고 k-omega SST는 더 정확하게 예측하는 경향을 반영
-    const reattachmentPoint = model === 'k-epsilon' ? 5.5 : 7.2; 
-    const peakTurbulence = model === 'k-epsilon' ? 0.08 : 0.065;
-
-    for (let i = 0; i <= points; i++) {
-      const x = (i / points) * 20; // x축 거리 (D)
-      
-      // 속도 프로파일 (단순화된 RANS 결과 모사)
-      let velocity;
-      if (x < reattachmentPoint) {
-        // 박리 영역 내의 속도 (음수 값 포함)
-        velocity = 0.5 + 0.5 * Math.tanh((x - reattachmentPoint / 2) * 0.8);
-      } else {
-        velocity = 1.0 - 0.2 * Math.exp(-(x - reattachmentPoint) * 0.3);
-      }
-
-      // 압력 계수 (Cp)
-      const cp = -0.5 * Math.exp(-x/3) + 0.3 * (1 - Math.exp(-(x-2)/5));
-
-      // 난류 운동 에너지 (TKE)
-      const tke = peakTurbulence * Math.exp(-Math.pow(x - reattachmentPoint/1.5, 2) / 8);
-
-      data.push({
-        x: parseFloat(x.toFixed(2)),
-        velocity: parseFloat(velocity.toFixed(3)),
-        pressure: parseFloat(cp.toFixed(3)),
-        tke: parseFloat(tke.toFixed(4)),
-        separationLine: x < reattachmentPoint ? -0.1 : 0
-      });
-    }
-    return data;
-  }, [model, reynolds]);
-
-  return (
-    <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-900">
-      <header className="max-w-6xl mx-auto mb-8">
-        <div className="flex items-center gap-3 mb-2">
-          <Activity className="text-blue-600 w-8 h-8" />
-          <h1 className="text-3xl font-bold tracking-tight">CFD 난류 모델 비교 분석기</h1>
+    <header class="max-w-6xl mx-auto mb-8 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+        <div>
+            <div class="flex items-center gap-3 mb-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="text-red-500 w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <h1 class="text-3xl font-bold tracking-tight">기계 시스템 진동 분석기</h1>
+            </div>
+            <p class="text-gray-600">질량-스프링-댐퍼 모델을 이용한 공진(Resonance) 특성 탐구</p>
         </div>
-        <p className="text-slate-600">급확대 관 유동에서의 k–ε vs k–ω SST 모델 예측 성능 분석</p>
-      </header>
+        <div class="bg-red-50 border border-red-100 px-4 py-2 rounded-lg text-red-700 text-sm font-bold shadow-sm">
+            고유 진동수: <span id="natFreqDisplay">0.00</span> Hz
+        </div>
+    </header>
 
-      <main className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-4 gap-6">
+    <main class="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        {/* 제어 패널 */}
-        <div className="lg:col-span-1 bg-white p-6 rounded-2xl shadow-sm border border-slate-200 h-fit space-y-6">
-          <section>
-            <label className="flex items-center gap-2 text-sm font-semibold mb-3">
-              <Settings className="w-4 h-4" /> 난류 모델 선택
-            </label>
-            <div className="flex flex-col gap-2">
-              <button 
-                onClick={() => setModel('k-epsilon')}
-                className={`p-3 rounded-lg text-sm font-medium transition-all ${model === 'k-epsilon' ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-100 hover:bg-slate-200'}`}
-              >
-                Standard k–ε
-              </button>
-              <button 
-                onClick={() => setModel('k-omega-sst')}
-                className={`p-3 rounded-lg text-sm font-medium transition-all ${model === 'k-omega-sst' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-100 hover:bg-slate-200'}`}
-              >
-                k–ω SST (Menter)
-              </button>
-            </div>
-          </section>
+        <!-- 설정 패널 -->
+        <div class="lg:col-span-4 bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-6">
+            <h3 class="text-sm font-bold text-gray-500 uppercase flex items-center gap-2">
+                시스템 파라미터
+            </h3>
+            
+            <div class="space-y-4">
+                <div>
+                    <div class="slider-label">
+                        <label>질량 (Mass)</label>
+                        <span class="font-bold text-red-600"><span id="massVal">2.0</span> kg</span>
+                    </div>
+                    <input type="range" id="massSlider" min="0.5" max="10" step="0.5" value="2.0">
+                </div>
 
-          <section>
-            <label className="block text-sm font-semibold mb-3 text-slate-700">레이놀즈 수 (Re)</label>
-            <input 
-              type="range" min="10000" max="100000" step="10000" 
-              value={reynolds} 
-              onChange={(e) => setReynolds(Number(e.target.value))}
-              className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-            />
-            <div className="flex justify-between text-xs mt-2 text-slate-500 font-mono">
-              <span>1e4</span>
-              <span className="text-blue-600 font-bold">{reynolds.toLocaleString()}</span>
-              <span>1e5</span>
-            </div>
-          </section>
+                <div>
+                    <div class="slider-label">
+                        <label>강성 (Stiffness)</label>
+                        <span class="font-bold text-red-600"><span id="stiffnessVal">200</span> N/m</span>
+                    </div>
+                    <input type="range" id="stiffnessSlider" min="50" max="500" step="10" value="200">
+                </div>
 
-          <div className="bg-amber-50 border border-amber-100 p-4 rounded-xl">
-            <h4 className="flex items-center gap-2 text-amber-800 text-sm font-bold mb-1">
-              <Info className="w-4 h-4" /> 분석 가이드
-            </h4>
-            <p className="text-xs text-amber-700 leading-relaxed">
-              급확대 관 유동에서 <strong>k-epsilon</strong>은 박리(Separation) 영역을 작게 잡는 경향이 있으며, <strong>k-omega SST</strong>는 역압력 구배를 더 잘 모사하여 재부착 지점(Reattachment)을 더 뒤쪽으로 예측합니다.
-            </p>
-          </div>
+                <div>
+                    <div class="slider-label">
+                        <label>감쇠 (Damping)</label>
+                        <span class="font-bold text-red-600"><span id="dampingVal">5</span> N·s/m</span>
+                    </div>
+                    <input type="range" id="dampingSlider" min="0" max="20" step="1" value="5">
+                </div>
+
+                <div class="pt-4 border-t border-gray-100">
+                    <div class="slider-label">
+                        <label class="font-bold">외력 주파수 (Force Freq)</label>
+                        <span class="font-bold text-blue-600"><span id="freqVal">1.00</span> Hz</span>
+                    </div>
+                    <input type="range" id="freqSlider" min="0.1" max="5.0" step="0.05" value="1.0">
+                </div>
+            </div>
+
+            <div class="flex gap-2 pt-2">
+                <button id="playBtn" class="flex-1 bg-red-600 text-white py-3 rounded-xl font-bold hover:bg-red-700 transition-all shadow-md">
+                    시뮬레이션 시작
+                </button>
+                <button id="resetBtn" class="p-3 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200">
+                    초기화
+                </button>
+            </div>
         </div>
 
-        {/* 메인 분석 영역 */}
-        <div className="lg:col-span-3 flex flex-col gap-6">
-          
-          {/* 탭 메뉴 */}
-          <div className="flex gap-2 bg-slate-200/50 p-1 rounded-xl w-fit">
-            <button 
-              onClick={() => setActiveTab('visualization')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'visualization' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
-            >
-              속도 분포 및 재부착
-            </button>
-            <button 
-              onClick={() => setActiveTab('analysis')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'analysis' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
-            >
-              성능 분석 데이터
-            </button>
-          </div>
+        <!-- 시각화 영역 -->
+        <div class="lg:col-span-8 space-y-6">
+            <!-- 물리 애니메이션 -->
+            <div class="bg-slate-900 rounded-2xl p-8 h-[250px] relative overflow-hidden flex items-center justify-center border-b-4 border-slate-700 shadow-inner">
+                <div class="absolute top-4 left-6 text-slate-500 text-xs font-mono uppercase">Physical Model</div>
+                
+                <!-- 천장 -->
+                <div class="absolute top-0 w-full h-4 bg-slate-800 border-b border-slate-700"></div>
 
-          {activeTab === 'visualization' ? (
-            <div className="grid grid-cols-1 gap-6">
-              {/* 속도 프로파일 차트 */}
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                  <Wind className="w-5 h-5 text-blue-500" /> 중심선 속도 및 박리 영역 분석
-                </h3>
-                <div className="h-[300px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={simulationData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-                      <defs>
-                        <linearGradient id="colorVel" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/>
-                          <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                      <XAxis dataKey="x" label={{ value: 'Distance (x/D)', position: 'insideBottom', offset: -5 }} fontSize={12} />
-                      <YAxis label={{ value: 'Normalized Velocity (U/Uin)', angle: -90, position: 'insideLeft' }} fontSize={12} />
-                      <Tooltip 
-                        contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-                      />
-                      <Area type="monotone" dataKey="velocity" stroke="#2563eb" fillOpacity={1} fill="url(#colorVel)" name="Velocity Ratio" strokeWidth={2} />
-                      <Line type="monotone" dataKey="separationLine" stroke="#ef4444" strokeWidth={3} dot={false} name="Separation Zone Indicator" />
-                    </AreaChart>
-                  </ResponsiveContainer>
+                <!-- 시스템 -->
+                <div id="vibrationBody" class="relative flex flex-col items-center">
+                    <!-- 스프링 -->
+                    <svg width="40" height="100" viewBox="0 0 40 100" class="text-slate-500" preserveAspectRatio="none">
+                        <path id="springPath" d="M20,0 L20,10 L35,20 L5,30 L35,40 L5,50 L35,60 L5,70 L20,80 L20,100" fill="none" stroke="currentColor" stroke-width="3" />
+                    </svg>
+                    <!-- 질량체 -->
+                    <div class="w-16 h-16 bg-gradient-to-br from-red-500 to-red-700 rounded-lg shadow-xl flex items-center justify-center border border-red-400">
+                        <span class="text-white text-xs font-bold" id="massBoxLabel">2kg</span>
+                    </div>
                 </div>
-                <div className="mt-4 grid grid-cols-2 gap-4">
-                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
-                    <span className="text-xs text-slate-500 block uppercase font-bold tracking-wider">재부착 지점 (Reattachment)</span>
-                    <span className="text-xl font-mono font-bold text-blue-600">x/D = {model === 'k-epsilon' ? '5.50' : '7.20'}</span>
-                  </div>
-                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
-                    <span className="text-xs text-slate-500 block uppercase font-bold tracking-wider">최대 난류 에너지</span>
-                    <span className="text-xl font-mono font-bold text-indigo-600">{model === 'k-epsilon' ? '0.080' : '0.065'}</span>
-                  </div>
-                </div>
-              </div>
 
-              {/* 압력 분포 차트 */}
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                <h3 className="text-lg font-bold mb-4">벽면 압력 회복 계수 (Pressure Recovery, Cp)</h3>
-                <div className="h-[250px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={simulationData}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                      <XAxis dataKey="x" fontSize={12} />
-                      <YAxis fontSize={12} />
-                      <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
-                      <Line type="monotone" dataKey="pressure" stroke="#8b5cf6" strokeWidth={3} dot={false} name="Cp" />
-                    </LineChart>
-                  </ResponsiveContainer>
+                <!-- 위험 경고 -->
+                <div id="dangerAlert" class="hidden absolute bottom-4 right-6 items-center gap-2 bg-red-500 text-white px-3 py-1 rounded-full text-xs font-bold animate-bounce">
+                    ⚠ 공진 위험: 과도 진폭
                 </div>
-              </div>
             </div>
-          ) : (
-            <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 space-y-8">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div>
-                  <h4 className="text-xl font-bold mb-4 border-b pb-2">k–ε 모델 (Standard)</h4>
-                  <ul className="space-y-3 text-sm text-slate-600">
-                    <li className="flex items-start gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1.5 flex-shrink-0" />
-                      <span><strong>특징:</strong> 난류 점성 계수를 등방성으로 가정, 계산이 매우 안정적임.</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1.5 flex-shrink-0" />
-                      <span><strong>장점:</strong> 계산 비용이 저렴하고 완전 발달된 난류 유동에 강함.</span>
-                    </li>
-                    <li className="flex items-start gap-2 text-red-600">
-                      <div className="w-1.5 h-1.5 rounded-full bg-red-500 mt-1.5 flex-shrink-0" />
-                      <span><strong>단점:</strong> <strong>박리(Separation)</strong>가 발생하는 유동에서 박리 영역을 너무 작게 예측함.</span>
-                    </li>
-                  </ul>
-                </div>
-                <div>
-                  <h4 className="text-xl font-bold mb-4 border-b pb-2">k–ω SST 모델 (Menter)</h4>
-                  <ul className="space-y-3 text-sm text-slate-600">
-                    <li className="flex items-start gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 mt-1.5 flex-shrink-0" />
-                      <span><strong>특징:</strong> 벽면 근처는 k-omega, 외부 유동은 k-epsilon의 장점을 혼합.</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 mt-1.5 flex-shrink-0" />
-                      <span><strong>장점:</strong> <strong>역압력 구배(Adverse Pressure Gradient)</strong> 모사에 탁월함.</span>
-                    </li>
-                    <li className="flex items-start gap-2 text-amber-600">
-                      <div className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-1.5 flex-shrink-0" />
-                      <span><strong>단점:</strong> k-epsilon보다 수렴성이 약간 떨어지며 격자 조밀도에 더 민감함.</span>
-                    </li>
-                  </ul>
-                </div>
-              </div>
 
-              <div className="p-6 bg-slate-900 text-white rounded-xl">
-                <h4 className="text-lg font-bold mb-4 flex items-center gap-2">
-                  <AlertCircle className="text-amber-400" /> 엔지니어링 의사 결정 (Trade-off)
-                </h4>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
-                  <div className="space-y-2">
-                    <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">정확도 우선</p>
-                    <p>박리, 회전 유동, 익형(Airfoil) 해석 시에는 <strong>SST</strong> 모델이 표준입니다.</p>
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">비용 우선</p>
-                    <p>초기 설계 단계나 매우 복잡한 시스템의 전체 압력 강하만 볼 때는 <strong>k-epsilon</strong>이 유리합니다.</p>
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">격자 전략</p>
-                    <p>SST 모델은 벽면 근처 y+를 1 근처로 유지해야 하므로 격자 생성 시간이 더 소요됩니다.</p>
-                  </div>
+            <!-- 그래프 영역 -->
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+                <h3 class="text-sm font-bold text-gray-500 uppercase mb-4">주파수 응답 곡선 (Bode Plot)</h3>
+                <div class="h-[250px]">
+                    <canvas id="responseChart"></canvas>
                 </div>
-              </div>
             </div>
-          )}
         </div>
-      </main>
+    </main>
 
-      <footer className="max-w-6xl mx-auto mt-12 text-center text-slate-400 text-sm">
-        <p>© CFD Turbulence Model Selection Analysis - Interactive Education Tool</p>
-      </footer>
-    </div>
-  );
-};
+    <script>
+        // 상태 변수
+        let mass = 2, stiffness = 200, damping = 5, forceFreq = 1.0;
+        let time = 0, isPlaying = false, animationId;
+        let chart;
 
-export default App;
+        // UI 요소
+        const body = document.getElementById('vibrationBody');
+        const spring = document.getElementById('springPath');
+        const playBtn = document.getElementById('playBtn');
+        const danger = document.getElementById('dangerAlert');
+
+        function updatePhysics() {
+            const wn_rad = Math.sqrt(stiffness / mass);
+            const wn_hz = wn_rad / (2 * Math.PI);
+            const cc = 2 * Math.sqrt(mass * stiffness);
+            const zeta = damping / cc;
+            
+            document.getElementById('natFreqDisplay').innerText = wn_hz.toFixed(2);
+            return { wn_hz, zeta };
+        }
+
+        function getDisplacement(t) {
+            const { wn_hz, zeta } = updatePhysics();
+            const r = forceFreq / wn_hz;
+            // 배율(MF) 계산
+            const mf = 1 / Math.sqrt(Math.pow(1 - r * r, 2) + Math.pow(2 * zeta * r, 2));
+            const w = 2 * Math.PI * forceFreq;
+            const phase = Math.atan2(2 * zeta * r, 1 - r * r);
+            
+            return 35 * mf * Math.sin(w * t - phase); // 시각화를 위한 스케일링
+        }
+
+        function animate() {
+            if (!isPlaying) return;
+            time += 0.02;
+            const disp = getDisplacement(time);
+            
+            body.style.transform = `translateY(${disp}px)`;
+            // 스프링 압축/이완 시각화 (높이 조절)
+            const springHeight = 100 + disp;
+            spring.parentElement.setAttribute('height', springHeight);
+            
+            if (Math.abs(disp) > 70) danger.classList.remove('hidden');
+            else danger.classList.add('hidden');
+            
+            animationId = requestAnimationFrame(animate);
+        }
+
+        function drawChart() {
+            const { wn_hz, zeta } = updatePhysics();
+            const data = [];
+            const labels = [];
+            
+            for (let f = 0.1; f <= 5.0; f += 0.1) {
+                const r = f / wn_hz;
+                const mf = 1 / Math.sqrt(Math.pow(1 - r * r, 2) + Math.pow(2 * zeta * r, 2));
+                labels.push(f.toFixed(1));
+                data.push(mf);
+            }
+
+            if (chart) {
+                chart.data.labels = labels;
+                chart.data.datasets[0].data = data;
+                chart.update();
+            } else {
+                const ctx = document.getElementById('responseChart').getContext('2d');
+                chart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: '진폭 배율 (MF)',
+                            data: data,
+                            borderColor: '#94a3b8',
+                            borderWidth: 2,
+                            pointRadius: 0,
+                            fill: false,
+                            tension: 0.4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            y: { title: { display: true, text: 'Magnification' }, min: 0 },
+                            x: { title: { display: true, text: 'Frequency (Hz)' } }
+                        }
+                    }
+                });
+            }
+        }
+
+        // 이벤트 리스너
+        playBtn.addEventListener('click', () => {
+            isPlaying = !isPlaying;
+            playBtn.innerText = isPlaying ? "일시정지" : "시뮬레이션 시작";
+            playBtn.className = isPlaying ? "flex-1 bg-amber-100 text-amber-700 py-3 rounded-xl font-bold" : "flex-1 bg-red-600 text-white py-3 rounded-xl font-bold";
+            if (isPlaying) animate();
+        });
+
+        document.getElementById('resetBtn').addEventListener('click', () => {
+            time = 0;
+            isPlaying = false;
+            cancelAnimationFrame(animationId);
+            body.style.transform = `translateY(0px)`;
+            playBtn.innerText = "시뮬레이션 시작";
+            playBtn.className = "flex-1 bg-red-600 text-white py-3 rounded-xl font-bold";
+            updatePhysics();
+            drawChart();
+        });
+
+        // 슬라이더 바인딩
+        const sliders = [
+            {id: 'mass', setter: (v) => { mass = v; document.getElementById('massBoxLabel').innerText = v + 'kg'; }},
+            {id: 'stiffness', setter: (v) => stiffness = v},
+            {id: 'damping', setter: (v) => damping = v},
+            {id: 'freq', setter: (v) => forceFreq = v}
+        ];
+
+        sliders.forEach(s => {
+            document.getElementById(s.id + 'Slider').addEventListener('input', (e) => {
+                const val = parseFloat(e.target.value);
+                document.getElementById(s.id + 'Val').innerText = val.toFixed(s.id === 'freq' ? 2 : 1);
+                s.setter(val);
+                updatePhysics();
+                drawChart();
+            });
+        });
+
+        window.onload = () => {
+            updatePhysics();
+            drawChart();
+        };
+    </script>
+</body>
+</html>
