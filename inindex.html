@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>기계 진동 및 공진 분석 시뮬레이터</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .slider-label { display: flex; justify-content: space-between; font-size: 0.875rem; margin-bottom: 0.25rem; }
+        input[type=range] { width: 100%; height: 6px; border-radius: 3px; cursor: pointer; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-900 min-h-screen p-4 md:p-8">
+
+    <header class="max-w-6xl mx-auto mb-8 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+        <div>
+            <div class="flex items-center gap-3 mb-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="text-red-500 w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <h1 class="text-3xl font-bold tracking-tight">기계 시스템 진동 분석기</h1>
+            </div>
+            <p class="text-gray-600">질량-스프링-댐퍼 모델을 이용한 공진(Resonance) 특성 탐구</p>
+        </div>
+        <div class="bg-red-50 border border-red-100 px-4 py-2 rounded-lg text-red-700 text-sm font-bold shadow-sm">
+            고유 진동수: <span id="natFreqDisplay">0.00</span> Hz
+        </div>
+    </header>
+
+    <main class="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        <!-- 설정 패널 -->
+        <div class="lg:col-span-4 bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-6">
+            <h3 class="text-sm font-bold text-gray-500 uppercase flex items-center gap-2">
+                시스템 파라미터
+            </h3>
+            
+            <div class="space-y-4">
+                <div>
+                    <div class="slider-label">
+                        <label>질량 (Mass)</label>
+                        <span class="font-bold text-red-600"><span id="massVal">2.0</span> kg</span>
+                    </div>
+                    <input type="range" id="massSlider" min="0.5" max="10" step="0.5" value="2.0">
+                </div>
+
+                <div>
+                    <div class="slider-label">
+                        <label>강성 (Stiffness)</label>
+                        <span class="font-bold text-red-600"><span id="stiffnessVal">200</span> N/m</span>
+                    </div>
+                    <input type="range" id="stiffnessSlider" min="50" max="500" step="10" value="200">
+                </div>
+
+                <div>
+                    <div class="slider-label">
+                        <label>감쇠 (Damping)</label>
+                        <span class="font-bold text-red-600"><span id="dampingVal">5</span> N·s/m</span>
+                    </div>
+                    <input type="range" id="dampingSlider" min="0" max="20" step="1" value="5">
+                </div>
+
+                <div class="pt-4 border-t border-gray-100">
+                    <div class="slider-label">
+                        <label class="font-bold">외력 주파수 (Force Freq)</label>
+                        <span class="font-bold text-blue-600"><span id="freqVal">1.00</span> Hz</span>
+                    </div>
+                    <input type="range" id="freqSlider" min="0.1" max="5.0" step="0.05" value="1.0">
+                </div>
+            </div>
+
+            <div class="flex gap-2 pt-2">
+                <button id="playBtn" class="flex-1 bg-red-600 text-white py-3 rounded-xl font-bold hover:bg-red-700 transition-all shadow-md">
+                    시뮬레이션 시작
+                </button>
+                <button id="resetBtn" class="p-3 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200">
+                    초기화
+                </button>
+            </div>
+        </div>
+
+        <!-- 시각화 영역 -->
+        <div class="lg:col-span-8 space-y-6">
+            <!-- 물리 애니메이션 -->
+            <div class="bg-slate-900 rounded-2xl p-8 h-[250px] relative overflow-hidden flex items-center justify-center border-b-4 border-slate-700 shadow-inner">
+                <div class="absolute top-4 left-6 text-slate-500 text-xs font-mono uppercase">Physical Model</div>
+                
+                <!-- 천장 -->
+                <div class="absolute top-0 w-full h-4 bg-slate-800 border-b border-slate-700"></div>
+
+                <!-- 시스템 -->
+                <div id="vibrationBody" class="relative flex flex-col items-center">
+                    <!-- 스프링 -->
+                    <svg width="40" height="100" viewBox="0 0 40 100" class="text-slate-500" preserveAspectRatio="none">
+                        <path id="springPath" d="M20,0 L20,10 L35,20 L5,30 L35,40 L5,50 L35,60 L5,70 L20,80 L20,100" fill="none" stroke="currentColor" stroke-width="3" />
+                    </svg>
+                    <!-- 질량체 -->
+                    <div class="w-16 h-16 bg-gradient-to-br from-red-500 to-red-700 rounded-lg shadow-xl flex items-center justify-center border border-red-400">
+                        <span class="text-white text-xs font-bold" id="massBoxLabel">2kg</span>
+                    </div>
+                </div>
+
+                <!-- 위험 경고 -->
+                <div id="dangerAlert" class="hidden absolute bottom-4 right-6 items-center gap-2 bg-red-500 text-white px-3 py-1 rounded-full text-xs font-bold animate-bounce">
+                    ⚠ 공진 위험: 과도 진폭
+                </div>
+            </div>
+
+            <!-- 그래프 영역 -->
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+                <h3 class="text-sm font-bold text-gray-500 uppercase mb-4">주파수 응답 곡선 (Bode Plot)</h3>
+                <div class="h-[250px]">
+                    <canvas id="responseChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // 상태 변수
+        let mass = 2, stiffness = 200, damping = 5, forceFreq = 1.0;
+        let time = 0, isPlaying = false, animationId;
+        let chart;
+
+        // UI 요소
+        const body = document.getElementById('vibrationBody');
+        const spring = document.getElementById('springPath');
+        const playBtn = document.getElementById('playBtn');
+        const danger = document.getElementById('dangerAlert');
+
+        function updatePhysics() {
+            const wn_rad = Math.sqrt(stiffness / mass);
+            const wn_hz = wn_rad / (2 * Math.PI);
+            const cc = 2 * Math.sqrt(mass * stiffness);
+            const zeta = damping / cc;
+            
+            document.getElementById('natFreqDisplay').innerText = wn_hz.toFixed(2);
+            return { wn_hz, zeta };
+        }
+
+        function getDisplacement(t) {
+            const { wn_hz, zeta } = updatePhysics();
+            const r = forceFreq / wn_hz;
+            // 배율(MF) 계산
+            const mf = 1 / Math.sqrt(Math.pow(1 - r * r, 2) + Math.pow(2 * zeta * r, 2));
+            const w = 2 * Math.PI * forceFreq;
+            const phase = Math.atan2(2 * zeta * r, 1 - r * r);
+            
+            return 35 * mf * Math.sin(w * t - phase); // 시각화를 위한 스케일링
+        }
+
+        function animate() {
+            if (!isPlaying) return;
+            time += 0.02;
+            const disp = getDisplacement(time);
+            
+            body.style.transform = `translateY(${disp}px)`;
+            // 스프링 압축/이완 시각화 (높이 조절)
+            const springHeight = 100 + disp;
+            spring.parentElement.setAttribute('height', springHeight);
+            
+            if (Math.abs(disp) > 70) danger.classList.remove('hidden');
+            else danger.classList.add('hidden');
+            
+            animationId = requestAnimationFrame(animate);
+        }
+
+        function drawChart() {
+            const { wn_hz, zeta } = updatePhysics();
+            const data = [];
+            const labels = [];
+            
+            for (let f = 0.1; f <= 5.0; f += 0.1) {
+                const r = f / wn_hz;
+                const mf = 1 / Math.sqrt(Math.pow(1 - r * r, 2) + Math.pow(2 * zeta * r, 2));
+                labels.push(f.toFixed(1));
+                data.push(mf);
+            }
+
+            if (chart) {
+                chart.data.labels = labels;
+                chart.data.datasets[0].data = data;
+                chart.update();
+            } else {
+                const ctx = document.getElementById('responseChart').getContext('2d');
+                chart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: '진폭 배율 (MF)',
+                            data: data,
+                            borderColor: '#94a3b8',
+                            borderWidth: 2,
+                            pointRadius: 0,
+                            fill: false,
+                            tension: 0.4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            y: { title: { display: true, text: 'Magnification' }, min: 0 },
+                            x: { title: { display: true, text: 'Frequency (Hz)' } }
+                        }
+                    }
+                });
+            }
+        }
+
+        // 이벤트 리스너
+        playBtn.addEventListener('click', () => {
+            isPlaying = !isPlaying;
+            playBtn.innerText = isPlaying ? "일시정지" : "시뮬레이션 시작";
+            playBtn.className = isPlaying ? "flex-1 bg-amber-100 text-amber-700 py-3 rounded-xl font-bold" : "flex-1 bg-red-600 text-white py-3 rounded-xl font-bold";
+            if (isPlaying) animate();
+        });
+
+        document.getElementById('resetBtn').addEventListener('click', () => {
+            time = 0;
+            isPlaying = false;
+            cancelAnimationFrame(animationId);
+            body.style.transform = `translateY(0px)`;
+            playBtn.innerText = "시뮬레이션 시작";
+            playBtn.className = "flex-1 bg-red-600 text-white py-3 rounded-xl font-bold";
+            updatePhysics();
+            drawChart();
+        });
+
+        // 슬라이더 바인딩
+        const sliders = [
+            {id: 'mass', setter: (v) => { mass = v; document.getElementById('massBoxLabel').innerText = v + 'kg'; }},
+            {id: 'stiffness', setter: (v) => stiffness = v},
+            {id: 'damping', setter: (v) => damping = v},
+            {id: 'freq', setter: (v) => forceFreq = v}
+        ];
+
+        sliders.forEach(s => {
+            document.getElementById(s.id + 'Slider').addEventListener('input', (e) => {
+                const val = parseFloat(e.target.value);
+                document.getElementById(s.id + 'Val').innerText = val.toFixed(s.id === 'freq' ? 2 : 1);
+                s.setter(val);
+                updatePhysics();
+                drawChart();
+            });
+        });
+
+        window.onload = () => {
+            updatePhysics();
+            drawChart();
+        };
+    </script>
+</body>
+</html>
