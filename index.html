@@ -1,220 +1,249 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
-import { Settings, Play, Pause, RotateCcw, Activity, Info, AlertTriangle } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area } from 'recharts';
+import { Settings, Info, Activity, Wind, AlertCircle } from 'lucide-react';
 
 const App = () => {
-  // 시스템 파라미터 상태 관리
-  const [mass, setMass] = useState(2); // 질량 (kg)
-  const [stiffness, setStiffness] = useState(200); // 스프링 상수 (N/m)
-  const [damping, setDamping] = useState(5); // 감쇠 계수 (N·s/m)
-  const [forceFreq, setForceFreq] = useState(1.0); // 외력 주파수 (Hz)
-  const [isPlaying, setIsPlaying] = useState(false);
-  
-  // 애니메이션 관련 상태
-  const [time, setTime] = useState(0);
-  const requestRef = useRef();
+  const [model, setModel] = useState('k-epsilon'); // 'k-epsilon' vs 'k-omega-sst'
+  const [reynolds, setReynolds] = useState(50000);
+  const [activeTab, setActiveTab] = useState('visualization');
 
-  // 물리 상수 계산 (고유진동수 등)
-  const physics = useMemo(() => {
-    const wn_rad = Math.sqrt(stiffness / mass); // 고유 각진동수 (rad/s)
-    const wn_hz = wn_rad / (2 * Math.PI); // 고유 진동수 (Hz)
-    const cc = 2 * Math.sqrt(mass * stiffness); // 임계 감쇠
-    const zeta = damping / cc; // 감쇠비
-    return { wn_rad, wn_hz, zeta };
-  }, [mass, stiffness, damping]);
-
-  // 주파수 응답 곡선 데이터 생성 (Bode Plot의 Magnitude 부분 모사)
-  const responseCurveData = useMemo(() => {
+  // CFD 시뮬레이션 데이터 생성 로직 (물리적 근거에 기반한 근사치)
+  const simulationData = useMemo(() => {
+    const points = 100;
     const data = [];
-    for (let f = 0.1; f <= 5.0; f += 0.05) {
-      const r = f / physics.wn_hz; // 주파수 비
-      const magnification = 1 / Math.sqrt(Math.pow(1 - r * r, 2) + Math.pow(2 * physics.zeta * r, 2));
+    const expansionRatio = 2; // 급확대비
+    
+    // k-epsilon은 박리 영역을 과소평가하고 k-omega SST는 더 정확하게 예측하는 경향을 반영
+    const reattachmentPoint = model === 'k-epsilon' ? 5.5 : 7.2; 
+    const peakTurbulence = model === 'k-epsilon' ? 0.08 : 0.065;
+
+    for (let i = 0; i <= points; i++) {
+      const x = (i / points) * 20; // x축 거리 (D)
+      
+      // 속도 프로파일 (단순화된 RANS 결과 모사)
+      let velocity;
+      if (x < reattachmentPoint) {
+        // 박리 영역 내의 속도 (음수 값 포함)
+        velocity = 0.5 + 0.5 * Math.tanh((x - reattachmentPoint / 2) * 0.8);
+      } else {
+        velocity = 1.0 - 0.2 * Math.exp(-(x - reattachmentPoint) * 0.3);
+      }
+
+      // 압력 계수 (Cp)
+      const cp = -0.5 * Math.exp(-x/3) + 0.3 * (1 - Math.exp(-(x-2)/5));
+
+      // 난류 운동 에너지 (TKE)
+      const tke = peakTurbulence * Math.exp(-Math.pow(x - reattachmentPoint/1.5, 2) / 8);
+
       data.push({
-        freq: parseFloat(f.toFixed(2)),
-        amp: parseFloat(magnification.toFixed(2)),
+        x: parseFloat(x.toFixed(2)),
+        velocity: parseFloat(velocity.toFixed(3)),
+        pressure: parseFloat(cp.toFixed(3)),
+        tke: parseFloat(tke.toFixed(4)),
+        separationLine: x < reattachmentPoint ? -0.1 : 0
       });
     }
     return data;
-  }, [physics]);
-
-  // 애니메이션 루프
-  const animate = (t) => {
-    setTime((prev) => prev + 0.02);
-    requestRef.current = requestAnimationFrame(animate);
-  };
-
-  useEffect(() => {
-    if (isPlaying) {
-      requestRef.current = requestAnimationFrame(animate);
-    } else {
-      cancelAnimationFrame(requestRef.current);
-    }
-    return () => cancelAnimationFrame(requestRef.current);
-  }, [isPlaying]);
-
-  // 현재 시스템의 변위 계산 (단순 조화 외력에 의한 응답)
-  const currentDisplacement = useMemo(() => {
-    const w = 2 * Math.PI * forceFreq;
-    const r = forceFreq / physics.wn_hz;
-    const amp = 1 / Math.sqrt(Math.pow(1 - r * r, 2) + Math.pow(2 * physics.zeta * r, 2));
-    const phase = Math.atan2(2 * physics.zeta * r, 1 - r * r);
-    return 40 * amp * Math.sin(w * time - phase); // 시각화를 위해 40배 확대
-  }, [time, forceFreq, physics]);
+  }, [model, reynolds]);
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 md:p-8 font-sans text-gray-900">
-      <header className="max-w-6xl mx-auto mb-8 flex justify-between items-end">
-        <div>
-          <div className="flex items-center gap-3 mb-2">
-            <Activity className="text-red-500 w-8 h-8" />
-            <h1 className="text-3xl font-bold tracking-tight">기계 시스템 진동 분석기</h1>
-          </div>
-          <p className="text-gray-600">질량-스프링-댐퍼 모델을 이용한 공진(Resonance) 특성 탐구</p>
+    <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-900">
+      <header className="max-w-6xl mx-auto mb-8">
+        <div className="flex items-center gap-3 mb-2">
+          <Activity className="text-blue-600 w-8 h-8" />
+          <h1 className="text-3xl font-bold tracking-tight">CFD 난류 모델 비교 분석기</h1>
         </div>
-        <div className="hidden md:block">
-          <div className="bg-red-50 border border-red-100 px-4 py-2 rounded-lg text-red-700 text-sm font-bold animate-pulse">
-            고유 진동수: {physics.wn_hz.toFixed(2)} Hz
-          </div>
-        </div>
+        <p className="text-slate-600">급확대 관 유동에서의 k–ε vs k–ω SST 모델 예측 성능 분석</p>
       </header>
 
-      <main className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <main className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-4 gap-6">
         
-        {/* 설정 패널 */}
-        <div className="lg:col-span-4 bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-8">
+        {/* 제어 패널 */}
+        <div className="lg:col-span-1 bg-white p-6 rounded-2xl shadow-sm border border-slate-200 h-fit space-y-6">
           <section>
-            <h3 className="text-sm font-bold text-gray-500 uppercase mb-4 flex items-center gap-2">
-              <Settings className="w-4 h-4" /> 시스템 파라미터
-            </h3>
-            
-            <div className="space-y-6">
-              <div>
-                <div className="flex justify-between text-sm mb-2">
-                  <label>질량 (Mass): <strong>{mass} kg</strong></label>
-                </div>
-                <input type="range" min="0.5" max="10" step="0.5" value={mass} onChange={(e) => setMass(Number(e.target.value))} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-red-500" />
-              </div>
-
-              <div>
-                <div className="flex justify-between text-sm mb-2">
-                  <label>강성 (Stiffness): <strong>{stiffness} N/m</strong></label>
-                </div>
-                <input type="range" min="50" max="500" step="10" value={stiffness} onChange={(e) => setStiffness(Number(e.target.value))} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-red-500" />
-              </div>
-
-              <div>
-                <div className="flex justify-between text-sm mb-2">
-                  <label>감쇠 (Damping): <strong>{damping} N·s/m</strong></label>
-                </div>
-                <input type="range" min="0" max="20" step="1" value={damping} onChange={(e) => setDamping(Number(e.target.value))} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-red-500" />
-              </div>
+            <label className="flex items-center gap-2 text-sm font-semibold mb-3">
+              <Settings className="w-4 h-4" /> 난류 모델 선택
+            </label>
+            <div className="flex flex-col gap-2">
+              <button 
+                onClick={() => setModel('k-epsilon')}
+                className={`p-3 rounded-lg text-sm font-medium transition-all ${model === 'k-epsilon' ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-100 hover:bg-slate-200'}`}
+              >
+                Standard k–ε
+              </button>
+              <button 
+                onClick={() => setModel('k-omega-sst')}
+                className={`p-3 rounded-lg text-sm font-medium transition-all ${model === 'k-omega-sst' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-100 hover:bg-slate-200'}`}
+              >
+                k–ω SST (Menter)
+              </button>
             </div>
           </section>
 
-          <section className="pt-4 border-t border-gray-100">
-            <h3 className="text-sm font-bold text-gray-500 uppercase mb-4">외부 하중 주파수</h3>
-            <div className="flex items-center gap-4">
-              <input type="range" min="0.1" max="5.0" step="0.05" value={forceFreq} onChange={(e) => setForceFreq(Number(e.target.value))} className="flex-1 h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-blue-600" />
-              <span className="font-mono font-bold text-blue-600 w-12">{forceFreq.toFixed(2)} Hz</span>
+          <section>
+            <label className="block text-sm font-semibold mb-3 text-slate-700">레이놀즈 수 (Re)</label>
+            <input 
+              type="range" min="10000" max="100000" step="10000" 
+              value={reynolds} 
+              onChange={(e) => setReynolds(Number(e.target.value))}
+              className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+            />
+            <div className="flex justify-between text-xs mt-2 text-slate-500 font-mono">
+              <span>1e4</span>
+              <span className="text-blue-600 font-bold">{reynolds.toLocaleString()}</span>
+              <span>1e5</span>
             </div>
           </section>
 
-          <div className="flex gap-2 pt-4">
-            <button onClick={() => setIsPlaying(!isPlaying)} className={`flex-1 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all ${isPlaying ? 'bg-amber-100 text-amber-700' : 'bg-red-600 text-white shadow-lg hover:bg-red-700'}`}>
-              {isPlaying ? <><Pause size={18} /> 일시정지</> : <><Play size={18} /> 시뮬레이션 시작</>}
-            </button>
-            <button onClick={() => {setTime(0); setIsPlaying(false)}} className="p-3 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-all">
-              <RotateCcw size={18} />
-            </button>
+          <div className="bg-amber-50 border border-amber-100 p-4 rounded-xl">
+            <h4 className="flex items-center gap-2 text-amber-800 text-sm font-bold mb-1">
+              <Info className="w-4 h-4" /> 분석 가이드
+            </h4>
+            <p className="text-xs text-amber-700 leading-relaxed">
+              급확대 관 유동에서 <strong>k-epsilon</strong>은 박리(Separation) 영역을 작게 잡는 경향이 있으며, <strong>k-omega SST</strong>는 역압력 구배를 더 잘 모사하여 재부착 지점(Reattachment)을 더 뒤쪽으로 예측합니다.
+            </p>
           </div>
         </div>
 
-        {/* 시각화 영역 */}
-        <div className="lg:col-span-8 space-y-6">
+        {/* 메인 분석 영역 */}
+        <div className="lg:col-span-3 flex flex-col gap-6">
           
-          {/* 물리적 애니메이션 */}
-          <div className="bg-slate-900 rounded-2xl p-8 h-[250px] relative overflow-hidden flex items-center justify-center border-b-4 border-slate-700">
-            <div className="absolute top-4 left-6 text-slate-400 text-xs font-mono uppercase tracking-widest">실시간 진동 모델링</div>
-            
-            {/* 천장(고정단) */}
-            <div className="absolute top-0 w-full h-4 bg-slate-800 flex justify-center">
-              <div className="w-32 h-full bg-slate-700"></div>
-            </div>
-
-            {/* 시스템 구성요소 */}
-            <div className="relative flex flex-col items-center" style={{ transform: `translateY(${currentDisplacement}px)` }}>
-              {/* 스프링 (SVG) */}
-              <svg width="40" height="80" viewBox="0 0 40 100" className="text-slate-500">
-                <path d="M20,0 L20,10 L35,20 L5,30 L35,40 L5,50 L35,60 L5,70 L20,80 L20,100" fill="none" stroke="currentColor" strokeWidth="3" />
-              </svg>
-              {/* 질량체 */}
-              <div className="w-20 h-20 bg-gradient-to-br from-red-500 to-red-700 rounded-lg shadow-2xl flex items-center justify-center border-2 border-red-400">
-                <span className="text-white font-bold">{mass}kg</span>
-              </div>
-            </div>
-
-            {/* 바닥과의 충돌 경고 (과도 진폭) */}
-            {Math.abs(currentDisplacement) > 80 && (
-              <div className="absolute bottom-4 right-6 flex items-center gap-2 bg-red-500/20 text-red-400 px-3 py-1 rounded-full text-xs font-bold border border-red-500/50">
-                <AlertTriangle size={14} /> 위험: 과도한 진폭 (공진 상태)
-              </div>
-            )}
+          {/* 탭 메뉴 */}
+          <div className="flex gap-2 bg-slate-200/50 p-1 rounded-xl w-fit">
+            <button 
+              onClick={() => setActiveTab('visualization')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'visualization' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              속도 분포 및 재부착
+            </button>
+            <button 
+              onClick={() => setActiveTab('analysis')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'analysis' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              성능 분석 데이터
+            </button>
           </div>
 
-          {/* 주파수 응답 곡선 (Bode Magnitude) */}
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold flex items-center gap-2">
-                <Activity className="text-blue-500 w-5 h-5" /> 주파수 응답 특성 (Magnification Factor)
-              </h3>
-              <div className="text-xs text-gray-500 font-medium">X축: 주파수(Hz) / Y축: 진폭 배율</div>
+          {activeTab === 'visualization' ? (
+            <div className="grid grid-cols-1 gap-6">
+              {/* 속도 프로파일 차트 */}
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                  <Wind className="w-5 h-5 text-blue-500" /> 중심선 속도 및 박리 영역 분석
+                </h3>
+                <div className="h-[300px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={simulationData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="colorVel" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/>
+                          <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="x" label={{ value: 'Distance (x/D)', position: 'insideBottom', offset: -5 }} fontSize={12} />
+                      <YAxis label={{ value: 'Normalized Velocity (U/Uin)', angle: -90, position: 'insideLeft' }} fontSize={12} />
+                      <Tooltip 
+                        contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                      />
+                      <Area type="monotone" dataKey="velocity" stroke="#2563eb" fillOpacity={1} fill="url(#colorVel)" name="Velocity Ratio" strokeWidth={2} />
+                      <Line type="monotone" dataKey="separationLine" stroke="#ef4444" strokeWidth={3} dot={false} name="Separation Zone Indicator" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-4">
+                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                    <span className="text-xs text-slate-500 block uppercase font-bold tracking-wider">재부착 지점 (Reattachment)</span>
+                    <span className="text-xl font-mono font-bold text-blue-600">x/D = {model === 'k-epsilon' ? '5.50' : '7.20'}</span>
+                  </div>
+                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                    <span className="text-xs text-slate-500 block uppercase font-bold tracking-wider">최대 난류 에너지</span>
+                    <span className="text-xl font-mono font-bold text-indigo-600">{model === 'k-epsilon' ? '0.080' : '0.065'}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 압력 분포 차트 */}
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                <h3 className="text-lg font-bold mb-4">벽면 압력 회복 계수 (Pressure Recovery, Cp)</h3>
+                <div className="h-[250px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={simulationData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="x" fontSize={12} />
+                      <YAxis fontSize={12} />
+                      <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
+                      <Line type="monotone" dataKey="pressure" stroke="#8b5cf6" strokeWidth={3} dot={false} name="Cp" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
             </div>
-            <div className="h-[250px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={responseCurveData}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis dataKey="freq" hide={false} />
-                  <YAxis />
-                  <Tooltip 
-                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-                    formatter={(value) => [`${value}배`, '진폭 배율']}
-                  />
-                  <ReferenceLine x={physics.wn_hz} stroke="#ef4444" strokeDasharray="5 5" label={{ position: 'top', value: '고유진동수', fill: '#ef4444', fontSize: 12 }} />
-                  <ReferenceLine x={forceFreq} stroke="#2563eb" strokeWidth={2} />
-                  <Line type="monotone" dataKey="amp" stroke="#94a3b8" strokeWidth={2} dot={false} animationDuration={300} />
-                </LineChart>
-              </ResponsiveContainer>
+          ) : (
+            <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 space-y-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div>
+                  <h4 className="text-xl font-bold mb-4 border-b pb-2">k–ε 모델 (Standard)</h4>
+                  <ul className="space-y-3 text-sm text-slate-600">
+                    <li className="flex items-start gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1.5 flex-shrink-0" />
+                      <span><strong>특징:</strong> 난류 점성 계수를 등방성으로 가정, 계산이 매우 안정적임.</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1.5 flex-shrink-0" />
+                      <span><strong>장점:</strong> 계산 비용이 저렴하고 완전 발달된 난류 유동에 강함.</span>
+                    </li>
+                    <li className="flex items-start gap-2 text-red-600">
+                      <div className="w-1.5 h-1.5 rounded-full bg-red-500 mt-1.5 flex-shrink-0" />
+                      <span><strong>단점:</strong> <strong>박리(Separation)</strong>가 발생하는 유동에서 박리 영역을 너무 작게 예측함.</span>
+                    </li>
+                  </ul>
+                </div>
+                <div>
+                  <h4 className="text-xl font-bold mb-4 border-b pb-2">k–ω SST 모델 (Menter)</h4>
+                  <ul className="space-y-3 text-sm text-slate-600">
+                    <li className="flex items-start gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 mt-1.5 flex-shrink-0" />
+                      <span><strong>특징:</strong> 벽면 근처는 k-omega, 외부 유동은 k-epsilon의 장점을 혼합.</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 mt-1.5 flex-shrink-0" />
+                      <span><strong>장점:</strong> <strong>역압력 구배(Adverse Pressure Gradient)</strong> 모사에 탁월함.</span>
+                    </li>
+                    <li className="flex items-start gap-2 text-amber-600">
+                      <div className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-1.5 flex-shrink-0" />
+                      <span><strong>단점:</strong> k-epsilon보다 수렴성이 약간 떨어지며 격자 조밀도에 더 민감함.</span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+
+              <div className="p-6 bg-slate-900 text-white rounded-xl">
+                <h4 className="text-lg font-bold mb-4 flex items-center gap-2">
+                  <AlertCircle className="text-amber-400" /> 엔지니어링 의사 결정 (Trade-off)
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
+                  <div className="space-y-2">
+                    <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">정확도 우선</p>
+                    <p>박리, 회전 유동, 익형(Airfoil) 해석 시에는 <strong>SST</strong> 모델이 표준입니다.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">비용 우선</p>
+                    <p>초기 설계 단계나 매우 복잡한 시스템의 전체 압력 강하만 볼 때는 <strong>k-epsilon</strong>이 유리합니다.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">격자 전략</p>
+                    <p>SST 모델은 벽면 근처 y+를 1 근처로 유지해야 하므로 격자 생성 시간이 더 소요됩니다.</p>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </main>
 
-      {/* 학습 요약 */}
-      <footer className="max-w-6xl mx-auto mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white p-5 rounded-xl border border-gray-200">
-          <h4 className="font-bold text-gray-800 mb-2 flex items-center gap-2">
-            <Info size={16} className="text-blue-500" /> 공진의 발생 조건
-          </h4>
-          <p className="text-sm text-gray-600 leading-relaxed">
-            외부 하중의 주파수(Force Freq)가 시스템의 <strong>고유진동수</strong>와 일치할 때 진폭이 무한히 커지는 현상이 발생합니다.
-          </p>
-        </div>
-        <div className="bg-white p-5 rounded-xl border border-gray-200">
-          <h4 className="font-bold text-gray-800 mb-2 flex items-center gap-2">
-            <Info size={16} className="text-blue-500" /> 감쇠(Damping)의 역할
-          </h4>
-          <p className="text-sm text-gray-600 leading-relaxed">
-            감쇠가 클수록 공진 시의 최대 진폭이 줄어들며, 응답 곡선이 완만해집니다. 기계 안정성을 위해 적절한 댐퍼 설계가 필수적입니다.
-          </p>
-        </div>
-        <div className="bg-white p-5 rounded-xl border border-gray-200">
-          <h4 className="font-bold text-gray-800 mb-2 flex items-center gap-2">
-            <Info size={16} className="text-blue-500" /> 질량과 강성의 영향
-          </h4>
-          <p className="text-sm text-gray-600 leading-relaxed">
-            질량이 커지면 고유진동수가 <strong>낮아지고</strong>, 강성(스프링)이 커지면 고유진동수가 <strong>높아집니다</strong>.
-          </p>
-        </div>
+      <footer className="max-w-6xl mx-auto mt-12 text-center text-slate-400 text-sm">
+        <p>© CFD Turbulence Model Selection Analysis - Interactive Education Tool</p>
       </footer>
     </div>
   );
