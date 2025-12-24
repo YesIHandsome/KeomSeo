@@ -1,0 +1,223 @@
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { Settings, Play, Pause, RotateCcw, Activity, Info, AlertTriangle } from 'lucide-react';
+
+const App = () => {
+  // 시스템 파라미터 상태 관리
+  const [mass, setMass] = useState(2); // 질량 (kg)
+  const [stiffness, setStiffness] = useState(200); // 스프링 상수 (N/m)
+  const [damping, setDamping] = useState(5); // 감쇠 계수 (N·s/m)
+  const [forceFreq, setForceFreq] = useState(1.0); // 외력 주파수 (Hz)
+  const [isPlaying, setIsPlaying] = useState(false);
+  
+  // 애니메이션 관련 상태
+  const [time, setTime] = useState(0);
+  const requestRef = useRef();
+
+  // 물리 상수 계산 (고유진동수 등)
+  const physics = useMemo(() => {
+    const wn_rad = Math.sqrt(stiffness / mass); // 고유 각진동수 (rad/s)
+    const wn_hz = wn_rad / (2 * Math.PI); // 고유 진동수 (Hz)
+    const cc = 2 * Math.sqrt(mass * stiffness); // 임계 감쇠
+    const zeta = damping / cc; // 감쇠비
+    return { wn_rad, wn_hz, zeta };
+  }, [mass, stiffness, damping]);
+
+  // 주파수 응답 곡선 데이터 생성 (Bode Plot의 Magnitude 부분 모사)
+  const responseCurveData = useMemo(() => {
+    const data = [];
+    for (let f = 0.1; f <= 5.0; f += 0.05) {
+      const r = f / physics.wn_hz; // 주파수 비
+      const magnification = 1 / Math.sqrt(Math.pow(1 - r * r, 2) + Math.pow(2 * physics.zeta * r, 2));
+      data.push({
+        freq: parseFloat(f.toFixed(2)),
+        amp: parseFloat(magnification.toFixed(2)),
+      });
+    }
+    return data;
+  }, [physics]);
+
+  // 애니메이션 루프
+  const animate = (t) => {
+    setTime((prev) => prev + 0.02);
+    requestRef.current = requestAnimationFrame(animate);
+  };
+
+  useEffect(() => {
+    if (isPlaying) {
+      requestRef.current = requestAnimationFrame(animate);
+    } else {
+      cancelAnimationFrame(requestRef.current);
+    }
+    return () => cancelAnimationFrame(requestRef.current);
+  }, [isPlaying]);
+
+  // 현재 시스템의 변위 계산 (단순 조화 외력에 의한 응답)
+  const currentDisplacement = useMemo(() => {
+    const w = 2 * Math.PI * forceFreq;
+    const r = forceFreq / physics.wn_hz;
+    const amp = 1 / Math.sqrt(Math.pow(1 - r * r, 2) + Math.pow(2 * physics.zeta * r, 2));
+    const phase = Math.atan2(2 * physics.zeta * r, 1 - r * r);
+    return 40 * amp * Math.sin(w * time - phase); // 시각화를 위해 40배 확대
+  }, [time, forceFreq, physics]);
+
+  return (
+    <div className="min-h-screen bg-gray-50 p-4 md:p-8 font-sans text-gray-900">
+      <header className="max-w-6xl mx-auto mb-8 flex justify-between items-end">
+        <div>
+          <div className="flex items-center gap-3 mb-2">
+            <Activity className="text-red-500 w-8 h-8" />
+            <h1 className="text-3xl font-bold tracking-tight">기계 시스템 진동 분석기</h1>
+          </div>
+          <p className="text-gray-600">질량-스프링-댐퍼 모델을 이용한 공진(Resonance) 특성 탐구</p>
+        </div>
+        <div className="hidden md:block">
+          <div className="bg-red-50 border border-red-100 px-4 py-2 rounded-lg text-red-700 text-sm font-bold animate-pulse">
+            고유 진동수: {physics.wn_hz.toFixed(2)} Hz
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        {/* 설정 패널 */}
+        <div className="lg:col-span-4 bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-8">
+          <section>
+            <h3 className="text-sm font-bold text-gray-500 uppercase mb-4 flex items-center gap-2">
+              <Settings className="w-4 h-4" /> 시스템 파라미터
+            </h3>
+            
+            <div className="space-y-6">
+              <div>
+                <div className="flex justify-between text-sm mb-2">
+                  <label>질량 (Mass): <strong>{mass} kg</strong></label>
+                </div>
+                <input type="range" min="0.5" max="10" step="0.5" value={mass} onChange={(e) => setMass(Number(e.target.value))} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-red-500" />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-sm mb-2">
+                  <label>강성 (Stiffness): <strong>{stiffness} N/m</strong></label>
+                </div>
+                <input type="range" min="50" max="500" step="10" value={stiffness} onChange={(e) => setStiffness(Number(e.target.value))} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-red-500" />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-sm mb-2">
+                  <label>감쇠 (Damping): <strong>{damping} N·s/m</strong></label>
+                </div>
+                <input type="range" min="0" max="20" step="1" value={damping} onChange={(e) => setDamping(Number(e.target.value))} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-red-500" />
+              </div>
+            </div>
+          </section>
+
+          <section className="pt-4 border-t border-gray-100">
+            <h3 className="text-sm font-bold text-gray-500 uppercase mb-4">외부 하중 주파수</h3>
+            <div className="flex items-center gap-4">
+              <input type="range" min="0.1" max="5.0" step="0.05" value={forceFreq} onChange={(e) => setForceFreq(Number(e.target.value))} className="flex-1 h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-blue-600" />
+              <span className="font-mono font-bold text-blue-600 w-12">{forceFreq.toFixed(2)} Hz</span>
+            </div>
+          </section>
+
+          <div className="flex gap-2 pt-4">
+            <button onClick={() => setIsPlaying(!isPlaying)} className={`flex-1 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all ${isPlaying ? 'bg-amber-100 text-amber-700' : 'bg-red-600 text-white shadow-lg hover:bg-red-700'}`}>
+              {isPlaying ? <><Pause size={18} /> 일시정지</> : <><Play size={18} /> 시뮬레이션 시작</>}
+            </button>
+            <button onClick={() => {setTime(0); setIsPlaying(false)}} className="p-3 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-all">
+              <RotateCcw size={18} />
+            </button>
+          </div>
+        </div>
+
+        {/* 시각화 영역 */}
+        <div className="lg:col-span-8 space-y-6">
+          
+          {/* 물리적 애니메이션 */}
+          <div className="bg-slate-900 rounded-2xl p-8 h-[250px] relative overflow-hidden flex items-center justify-center border-b-4 border-slate-700">
+            <div className="absolute top-4 left-6 text-slate-400 text-xs font-mono uppercase tracking-widest">실시간 진동 모델링</div>
+            
+            {/* 천장(고정단) */}
+            <div className="absolute top-0 w-full h-4 bg-slate-800 flex justify-center">
+              <div className="w-32 h-full bg-slate-700"></div>
+            </div>
+
+            {/* 시스템 구성요소 */}
+            <div className="relative flex flex-col items-center" style={{ transform: `translateY(${currentDisplacement}px)` }}>
+              {/* 스프링 (SVG) */}
+              <svg width="40" height="80" viewBox="0 0 40 100" className="text-slate-500">
+                <path d="M20,0 L20,10 L35,20 L5,30 L35,40 L5,50 L35,60 L5,70 L20,80 L20,100" fill="none" stroke="currentColor" strokeWidth="3" />
+              </svg>
+              {/* 질량체 */}
+              <div className="w-20 h-20 bg-gradient-to-br from-red-500 to-red-700 rounded-lg shadow-2xl flex items-center justify-center border-2 border-red-400">
+                <span className="text-white font-bold">{mass}kg</span>
+              </div>
+            </div>
+
+            {/* 바닥과의 충돌 경고 (과도 진폭) */}
+            {Math.abs(currentDisplacement) > 80 && (
+              <div className="absolute bottom-4 right-6 flex items-center gap-2 bg-red-500/20 text-red-400 px-3 py-1 rounded-full text-xs font-bold border border-red-500/50">
+                <AlertTriangle size={14} /> 위험: 과도한 진폭 (공진 상태)
+              </div>
+            )}
+          </div>
+
+          {/* 주파수 응답 곡선 (Bode Magnitude) */}
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold flex items-center gap-2">
+                <Activity className="text-blue-500 w-5 h-5" /> 주파수 응답 특성 (Magnification Factor)
+              </h3>
+              <div className="text-xs text-gray-500 font-medium">X축: 주파수(Hz) / Y축: 진폭 배율</div>
+            </div>
+            <div className="h-[250px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={responseCurveData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="freq" hide={false} />
+                  <YAxis />
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                    formatter={(value) => [`${value}배`, '진폭 배율']}
+                  />
+                  <ReferenceLine x={physics.wn_hz} stroke="#ef4444" strokeDasharray="5 5" label={{ position: 'top', value: '고유진동수', fill: '#ef4444', fontSize: 12 }} />
+                  <ReferenceLine x={forceFreq} stroke="#2563eb" strokeWidth={2} />
+                  <Line type="monotone" dataKey="amp" stroke="#94a3b8" strokeWidth={2} dot={false} animationDuration={300} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      {/* 학습 요약 */}
+      <footer className="max-w-6xl mx-auto mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-white p-5 rounded-xl border border-gray-200">
+          <h4 className="font-bold text-gray-800 mb-2 flex items-center gap-2">
+            <Info size={16} className="text-blue-500" /> 공진의 발생 조건
+          </h4>
+          <p className="text-sm text-gray-600 leading-relaxed">
+            외부 하중의 주파수(Force Freq)가 시스템의 <strong>고유진동수</strong>와 일치할 때 진폭이 무한히 커지는 현상이 발생합니다.
+          </p>
+        </div>
+        <div className="bg-white p-5 rounded-xl border border-gray-200">
+          <h4 className="font-bold text-gray-800 mb-2 flex items-center gap-2">
+            <Info size={16} className="text-blue-500" /> 감쇠(Damping)의 역할
+          </h4>
+          <p className="text-sm text-gray-600 leading-relaxed">
+            감쇠가 클수록 공진 시의 최대 진폭이 줄어들며, 응답 곡선이 완만해집니다. 기계 안정성을 위해 적절한 댐퍼 설계가 필수적입니다.
+          </p>
+        </div>
+        <div className="bg-white p-5 rounded-xl border border-gray-200">
+          <h4 className="font-bold text-gray-800 mb-2 flex items-center gap-2">
+            <Info size={16} className="text-blue-500" /> 질량과 강성의 영향
+          </h4>
+          <p className="text-sm text-gray-600 leading-relaxed">
+            질량이 커지면 고유진동수가 <strong>낮아지고</strong>, 강성(스프링)이 커지면 고유진동수가 <strong>높아집니다</strong>.
+          </p>
+        </div>
+      </footer>
+    </div>
+  );
+};
+
+export default App;
